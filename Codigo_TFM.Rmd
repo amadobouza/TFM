@@ -1,0 +1,415 @@
+---
+title: "Código TFM"
+author: "Javier Amado Bouza"
+date: "`r format(Sys.time(),'%d de %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  word_document:
+    toc: yes
+    toc_depth: 2
+    
+---
+
+
+```{r todo el código, eval=FALSE}
+#Se cargan todas las librerías que se utilizarán a lo largo del procedimiento
+library(dplyr)
+library(mice)
+library(car)
+library(tibble)
+library(lattice)
+library(survival)
+library(randomForestSRC)
+library(survivalsvm)
+library(mboost)
+library(Hmisc)
+library(ModelMetrics)
+library(car)
+library(miceadds)
+library(ggpubr)
+#Se cargan los datos crudos mediante la función read.csv2 porque el separador es punto
+#y coma. Además, se utiliza dec = ","
+#porque el separador de los decimales es una coma.
+datos_crudos <- read.csv2(file = "/Volumes/Coisas/Javier/Master/2021/TFM/BD/BdD Clinical Trial/LAKE/lake.csv",
+                          dec = ",")
+#Se obtiene cuántos NA hay en el dataset datos_crudos
+sum(is.na(datos_crudos))
+#Se obtiene el número de valores especiales (que incluye a los NA)
+valores_especiales <- function(x){if (is.numeric(x)) !is.finite(x) else is.na(x)}
+sum(sapply(datos_crudos, valores_especiales))
+#Se calcula el porcentaje inicial de datos faltantes
+porcentaje_NA <- ((sum(is.na(datos_crudos))) / (ncol(datos_crudos) * nrow(datos_crudos))) *100
+porcentaje_NA
+#Se convierte a formato de fecha todas las fechas del dataset
+datos_crudos$fecha_nac <- as.Date(datos_crudos$fecha_nac, format = "%m/%d/%Y")
+datos_crudos$fecha_ini_lake <- as.Date(datos_crudos$fecha_ini_lake, format = "%m/%d/%Y")
+datos_crudos$fecha_vih <- as.Date(datos_crudos$fecha_vih, format = "%m/%d/%Y")
+datos_crudos$Fecha_0 <- as.Date(datos_crudos$Fecha_0, format = "%m/%d/%Y")
+#Se convierte a la clase factor todas las columnas que son factores
+datos_crudos$sexo <- as.factor(datos_crudos$sexo)
+datos_crudos$factorriesgo_ADVP <- as.factor(datos_crudos$factorriesgo_ADVP)
+datos_crudos$estadio_VIH_20 <- as.factor(datos_crudos$estadio_VIH_20)
+datos_crudos$factorriesgo_heterosexual <- as.factor(datos_crudos$factorriesgo_heterosexual)
+datos_crudos$factorriesgo_homosexual <- as.factor(datos_crudos$factorriesgo_homosexual)
+datos_crudos$factorriesgo_hemofilia <- as.factor(datos_crudos$factorriesgo_hemofilia)
+datos_crudos$factorriesgo_otros <- as.factor(datos_crudos$factorriesgo_otros)
+datos_crudos$estadio_VIH_31 <- as.factor(datos_crudos$estadio_VIH_31)
+datos_crudos$Grupo <- as.factor(datos_crudos$Grupo)
+datos_crudos$VHC_0 <- as.factor(datos_crudos$VHC_0)
+datos_crudos$VHB_0 <- as.factor(datos_crudos$VHB_0)
+#Tras analizar manualmente el dataset , se eliminan los datos de fechas incorrectas
+datos_crudos[101,1] <- c(NA)
+datos_crudos[51,5] <- c(NA)
+datos_crudos[53,5] <- c(NA)
+datos_crudos[54,5] <- c(NA)
+datos_crudos[56,5] <- c(NA)
+datos_crudos[57,5] <- c(NA)
+datos_crudos[111,5] <- c(NA)
+datos_crudos[113,5] <- c(NA)
+datos_crudos[26,11] <- c(NA)
+datos_crudos[44,11] <- c(NA)
+datos_crudos[47,11] <- c(NA)
+datos_crudos[51,13] <- c(NA)
+datos_crudos[52,11] <- c(NA)
+datos_crudos[52,13] <- c(NA)
+datos_crudos[53,11] <- c(NA)
+datos_crudos[53,13] <- c(NA)
+datos_crudos[54,11] <- c(NA)
+datos_crudos[54,13] <- c(NA)
+datos_crudos[55,13] <- c(NA)
+datos_crudos[57,11] <- c(NA)
+datos_crudos[111,13] <- c(NA)
+datos_crudos[112,11] <- c(NA)
+datos_crudos[112,13] <- c(NA)
+datos_crudos[113,11] <- c(NA)
+datos_crudos[113,13] <- c(NA)
+#Se recodifican las variables VHC_0 y VHB_0 y sexo
+datos_crudos$VHC_0 <- recode(datos_crudos$VHC_0, "2=0;1=1")
+datos_crudos$VHB_0 <- recode(datos_crudos$VHB_0, "2=0;1=1")
+datos_crudos$sexo <- recode(datos_crudos$sexo, "1=0;2=1")
+#Se mide el porcentaje de datos faltantes en cada columna
+porcentaje_missing <- unlist(lapply(datos_crudos, function(x) sum(is.na(x))))/
+  nrow(datos_crudos)
+sort(porcentaje_missing[porcentaje_missing >= 0], decreasing = TRUE)
+#Se eliminan aquellas columnas con más de un 50% de datos faltantes, aquellas 
+#que no contienen
+#datos útiles para este procedimiento, y las fechas
+datos_crudos_2 <- datos_crudos %>% 
+  dplyr::select(-proc,-nusuario,-npac,-nvisita,-especificar,-a19,-a28,-a32,-edad,
+                -Estado,-week_0,-AcidoPiruvico_0,-AcidoPiruvico_12,-AcidoPiruvico_24,
+                -AcidoPiruvico_36,-AcidoPiruvico_48,Embarazo_0,-week_12,-Fecha_12,
+                -VHC_12,-VHB_12,-Embarazo_12,-week_24,-Fecha_24,-VHC_24,-VHB_24,
+                -Embarazo_24,-cv50_0,-cv50_12,-cv50_24,-week_36,-Fecha_36,-VHC_36,
+                -VHB_36,-Embarazo_36,-week_48,-Fecha_48,-VHC_48,-VHB_48,-Embarazo_48,
+                -cv50_36,-cv50_48,-tpo_vih_meses,-factor_riesgo_total,-diff_cd4_48_0,
+                -diff_cd4p_48_0,-diff_col_48_0,-diff_HDL_48_0,-diff_LDL_48_0,-AcidoLactico_0,
+                -Bicarbonato_0,-Cloro_48,-Cloro_0,-LDL_mg_48,-Cloro_36,-Cloro_24,-Calcio_36,
+                -pH_24,-CD8P_48,-Leucocitos_48,-Hematocrito_48,-Hemoglobina_48,
+                -Creatinina_mumol_48,-Bilirrubina_mumol_48,-Colesterol_mg_48,
+                -Trigliceridos_mg_48,-Albumina_36,-Amilasa_24,-Potasio_36,-LinfosTotales_36,
+                -Hemoglobina_36,-Plaquetas_36,-CD4P_36,-Urea_mg_36,-Creatinina_mumol_36,
+                -Colesterol_mg_36,-Trigliceridos_mg_36,-pH_48,-pH_36,-AcidoLactico_48,
+                -Amilasa_48,-Bicarbonato_36,-AcidoLactico_36,-ProteinasTotales_48,-Sodio_48,
+                -CD4P_48,-LinfosTotales_48,-HDL_mg_48,-Plaquetas_48,-Glucosa_mg_48,-GPT_48,
+                -GOT_48,-Cloro_12,-Amilasa_36,-Bicarbonato_24,-Amilasa_0,-HDL_mg_36,
+                -AcidoLactico_24,-Leucocitos_36,-GGT_36,-CD8P_36,-Bilirrubina_mumol_36,
+                -GPT_36,-Embarazo_0,-pH_0,-Bicarbonato_48,-Calcio_48,-Albumina_48,
+                -Potasio_48,-LDL_mg_36,-Urea_mg_48,-GGT_48,-ProteinasTotales_36,-Sodio_36,
+                -Hematocrito_36,-Glucosa_mg_36,-GOT_36,-CD8A_48,-CD8A_36,-Calcio_24,
+                -Albumina_24, -fecha_nac, -fecha_vih, -fecha_ini_lake, -Fecha_0, 
+                -factorriesgo_hemofilia)
+#Se obtiene cuántos NA hay en el dataset datos_crudos_2
+#Se obtiene el número de valores especiales (que incluye a los NA) del dataset
+#datos_crudos_2
+sum(sapply(datos_crudos_2, valores_especiales))
+#Se calcula cuántas filas tienen todos los datos
+complete_cases <- na.omit(datos_crudos_2)
+nrow(complete_cases)
+#Gráfico del patrón de pérdida de datos
+md.pattern(datos_crudos_2)
+#Se crea la nueva variable previo_fracaso_24 que contiene
+#el resultado de los fracasos virológicos en la semana 24
+previo_fracaso_24 <- with(datos_crudos_2,ifelse(CargaViral_12>50 & CargaViral_24>50,1,
+                                                ifelse(CargaViral_12<50 & CargaViral_24>200,1,0)))
+#Se introduce como columna en datos_crudos_2 
+datos_crudos_2 <- mutate(datos_crudos_2,Fracaso_24 = previo_fracaso_24, .after = 
+                           "CargaViral_24")
+#Se crea la nueva variable previo_fracaso_36 que contiene
+#el resultado de los fracasos virológicos en la semana 36
+previo_fracaso_36 <- with(datos_crudos_2,ifelse(CargaViral_24<=50 & 
+                                                  CargaViral_36>200,1,0))
+#Se introduce como columna en datos_crudos_2
+datos_crudos_2 <- mutate(datos_crudos_2,Fracaso_36 = previo_fracaso_36, .after = 
+                           "CargaViral_36")
+#Se crea la nueva variable previo_fracaso_48 que contiene
+#el resultado de los fracasos virológicos en la semana 48
+previo_fracaso_48 <- with(datos_crudos_2,ifelse(CargaViral_36<=50 & CargaViral_48>200,1,
+                                                ifelse(CD4A_48<300,1,0)))
+#Se introduce como columna en datos_crudos_2
+datos_crudos_2 <- mutate(datos_crudos_2,Fracaso_48 = previo_fracaso_48,
+                         .after = "CargaViral_48")
+#Se crea la variable Fracasos para aglutinar
+#todos los fracasos virológicos producidos a 
+#lo largo del ensayo
+datos_crudos_2 <- mutate(datos_crudos_2, Fracasos = apply(datos_crudos_2[,c(68,93,96),
+                                                                         drop = F],
+                                                  1,sum,na.rm=TRUE),.after = 97)
+#Se recodifica la variable Fracasos para que sea dicotómica
+datos_crudos_2$Fracasos <- recode(datos_crudos_2$Fracasos, "1:2=1;0=0")
+#Se convierte a la clase factor todas las columnas dicotómicas de fracaso
+datos_crudos_2$Fracaso_24 <- as.factor(datos_crudos_2$Fracaso_24)
+datos_crudos_2$Fracaso_36 <- as.factor(datos_crudos_2$Fracaso_36)
+datos_crudos_2$Fracaso_48 <- as.factor(datos_crudos_2$Fracaso_48)
+datos_crudos_2$Fracasos <- as.factor(datos_crudos_2$Fracasos)
+#Se crea la variable de tiempo hasta el fracaso para que muestre los tiempos
+#de abandono en caso de abandono del ensayo, o la semana 48 en caso de que no haya abandono
+datos_crudos_2$Tiempo_al_fracaso <- as.numeric(c(24,4,48,48,48,48,24,36,12,12,36,24,48,36,
+                                                 48,48,12,48,48,4,48,4,48,12,48,4,48,4,
+                                             48,48,48,48,48,48,24,48,48,12,48,4,24,24,4,
+                                             24,12,12,24,24,12,4,48,12,36,48,4,12,
+                                             24,4,36,48,48,36,24,24,12,24,48,48,48,48,48,
+                                             48,4,48,48,48,48,48,36,12,48,24,4,48,
+                                             48,24,48,48,48,48,48,12,12,24,48,24,36,12,4,
+                                             12,12,24,24,24,24,4,36,12,4,4,48,24,4,
+                                             24,24,36))
+#Se crea la variable abandono que muestra si el paciente ha dejado el ensayo antes de su
+#finalización. Independientemente de si ha habido fracaso virológico o no.
+datos_crudos_2$abandono <- as.factor(with(datos_crudos_2,ifelse(Tiempo_al_fracaso==4 | 
+                                                                  Tiempo_al_fracaso==12 | 
+                                                      Tiempo_al_fracaso==24 | 
+                                                        Tiempo_al_fracaso==36,1,0)))
+#Para facilitar la observación de los abandonos, se crea
+#un dataset sólo con las columnas de las cargas virales y CD4A
+attach(datos_crudos_2, warn.conflicts = F)
+abandonos <- cbind(CargaViral_0, CD4A_0,CargaViral_12, CD4A_12,CargaViral_24, CD4A_24, 
+                   CargaViral_36,
+                   CD4A_36, CargaViral_48, CD4A_48,Tiempo_al_fracaso)
+colnames(abandonos) <- c("carga_viral0", "CD4A_0","carga_viral12", "CD4A_12","carga_viral24",
+                         "CD4A_24",
+                         "carga_viral36", "CD4A_36","carga_viral48","CD4A_48","Tiempo_al_fracaso")
+detach(datos_crudos_2)
+#Se calcula el influx y el outflux del dataset
+#salvo las variables categóricas
+flux <- flux(datos_crudos_2[,-c(1:8,35,36,68,93,96,98:100)])
+#Se obtienen las 40 columnas con menor outflux,
+#ordenadas de menor a mayor outflux
+head(flux[order(flux$outflux),],40)
+#Se obtienen las 40 columnas con mayor outflux,
+#ordenadas de menor a mayor outflux
+tail(flux[order(flux$outflux),],40)
+#Se filtra cuáles son los nombres de las variables que no tienen un buen influx ni outflux
+#se marca el valor de 0.4 como umbral inferior
+in_out <- as.vector(rownames(filter(flux, flux$outflux < 0.4 & flux$influx < 0.4)))
+in_out
+#Se eliminan las columnas que aparecen en el listado con bajo influx y outflux
+#además se eliminan las variables creadas para obtener la variable Fracaso
+data_imp <- datos_crudos_2 %>% dplyr::select(-Calcio_12, -pH_12,-Bicarbonato_12, 
+                                             -AcidoLactico_12,-CD4P_24, -CD8A_24, 
+                                             -CD8P_24, -Hematocrito_24, -Hemoglobina_24, 
+                                             -Plaquetas_24, -Leucocitos_24, -LinfosTotales_24,
+                                             -Glucosa_mg_24, -Urea_mg_24, -Creatinina_mumol_24,
+                                             -Sodio_24, -Potasio_24,-Bilirrubina_mumol_24, 
+                                             -GPT_24, -GOT_24, -GGT_24, -ProteinasTotales_24, 
+                                             -Colesterol_mg_24, -LDL_mg_24, -HDL_mg_24, 
+                                             -Trigliceridos_mg_24,-Fracaso_24,-Fracaso_36,-Fracaso_48)
+#Se calcula de nuevo el porcentaje de valores faltantes
+porcentaje_NA_2 <- ((sum(is.na(data_imp))) / (ncol(data_imp) * nrow(data_imp))) *100
+porcentaje_NA_2
+#Se obtiene un modelo lineal que servirá para buscar outliers
+modelo <- glm(data = data_imp, Tiempo_al_fracaso~Grupo + CargaViral_0 + CD4A_0 + CargaViral_12 + 
+                CD4A_12 +
+                        CargaViral_24 + CD4A_24 + CargaViral_36 + CD4A_36 + CargaViral_48 + 
+                CD4A_48)
+#Utilizando la función outlierTest se obtiene la lista de filas
+#con valores atípicos
+outlierTest(modelo)
+#Se muestran los valores de las filas que han salido como candidatas
+data_imp[c(111,60),c(8:10,37,38,63:68)]
+#El valor anómalo es convertido en NA
+data_imp[60,38] <- c(NA)
+#Se hace una imputación con 0 iteraciones, utilizando el dataset data_imp
+imp_0 <- mice(data_imp,maxit=0)
+polr<- c("estadio_VIH_20", "estadio_VIH_31")
+logreg_boot<- c("sexo", "factorriesgo_ADVP", "factorriesgo_heterosexual", "factorriesgo_homosexual",
+                "factorriesgo_otros", "Grupo","VHC_0","VHB_0",
+                   "Fracasos","abandono")
+cart <- c("CD4A_48","Tiempo_al_fracaso")
+#Se extraen los métodos de imputación
+meth = imp_0$method
+#Se asignan los métodos
+meth[polr] <- "polr"
+meth[logreg_boot] <- "logreg.boot"
+meth[cart] <- "cart"
+#Se asigna las variables que no van a intervenir en la predicción
+#principalmente las categóricas, y aquellas con bajo outflux
+#se hace lo contrario con las que van a intervenir
+quick <- quickpred(data = data_imp,mincor = 0.2, minpuc = 0.2,include = as.vector(rownames(
+  filter(flux, flux$outflux > 0.75 & flux$outflux < 1) !="VHC_0")),exclude = c(as.vector(
+    rownames(filter(flux, flux$outflux < 0.75 & flux$outflux == 1))),"sexo","factorriesgo_ADVP",
+    "estadio_VIH_20", "estadio_VIH_31", "factorriesgo_heterosexual", "factorriesgo_homosexual",
+    "factorriesgo_otros", "Grupo","VHC_0","VHB_0","Tiempo_al_fracaso","Fracasos", "CargaViral_36","ProteinasTotales_12","Albumina_0","CargaViral_24","CargaViral_12","abandono"))
+#Se realiza la imputación con 25 iteraciones
+imp_1 <- mice(data_imp, maxit = 25, method = meth, predictorMatrix = quick,
+              remove.collinear = F, ridge = 1e-04, seed = 3, printFlag = F)
+#Se fija una semilla aleatoria
+set.seed(3)
+#Se obtiene un número aleatorio entre el 1 y el 5 para que sirva como cifra
+#con la que extraer el dataset seleccionado
+numero <- as.integer(runif(1,1.000,5.999))
+#Con el número calculado se procede a extraer el dataset
+result_imp <- mice::complete(imp_1, numero)
+#Se convierte el valor de la columna tiempo al fracaso en numérico, ya que si es
+#categórica puede ser problemático de cara a su utilización por los algoritmos
+result_imp$Tiempo_al_fracaso <- as.numeric(as.character(result_imp$Tiempo_al_fracaso))
+#Se convierte el valor de la columna Fracasos en numérico, ya que si es
+#categórica puede ser problemático de cara a su utilización por los algoritmos
+#principalmente el bosque de supervivencia aleatorio
+result_imp$Fracasos <- as.numeric(as.character(result_imp$Fracasos))
+#Se fija la semilla
+set.seed(3)
+#Se fija el tamaño de la muestra que va a producir el dataset
+#de entrenamiento, siendo éste un 75% del tamaño del dataset original
+tamaño_muestra <- floor(0.75 * nrow(result_imp))
+#Se realiza el muestreo utilizando la función sample
+muestreo <- sample(seq_len(nrow(result_imp)), size = tamaño_muestra, replace = F)
+#Se obtiene el dataset tr con lo datos para el training.
+entrenamiento <- result_imp[muestreo, 1:71]
+#Se obtiene el dataset te con lo datos para el test.
+test <- result_imp[- muestreo, 1:71]
+#Se utiliza la función tune para encontrar los valores óptimos para el bosque
+#de supervivencia aleatorio
+attach(entrenamiento,warn.conflicts = F)
+tune_rsf <- tune(Surv(Tiempo_al_fracaso,Fracasos) ~ ., entrenamiento, mtryStart = ncol(entrenamiento)
+                 / 2,nodesizeTry = c(1:9, seq(10, 100, by = 5)), ntreeTry =50 ,sampsize = function(x)
+                   {min(x * .632, max(150, x ^ (3/4)))},nsplit = 10, stepFactor = 1.25, improve = 1e-3,
+                 strikeout = 3, maxIter = 25,trace = FALSE, doBest = TRUE)
+#Se procede a crear el algoritmo de bosque aleatorio con los valores calculados previamente
+random_s_f<- rfsrc(Surv(Tiempo_al_fracaso,Fracasos) ~ .,mtry = 69,num.trees = 500,nodesize = 7,
+                   data = entrenamiento, seed = 3)
+print(random_s_f)
+detach(entrenamiento)
+#Se obtienen los valores predichos utilizando un bosque aleatorio
+#además de valores de desempeño del modelo, como la tasa de error
+predict_rsf <- predict.rfsrc(random_s_f, test)
+print(predict_rsf)
+#Se obtiene el modelo de supervivencia utilizando máquina de soporte vectorial
+#de supervivencia
+survival_SVM <- survivalsvm(Surv(Tiempo_al_fracaso,Fracasos)~.,data = entrenamiento, type = "hybrid",
+                            gamma.mu = c(3,3), opt.meth = "quadprog",kernel = "add_kernel",diff.meth = 
+                              "makediff3")
+#Se predicen los valores obtenidos en el modelo de
+#la máquina de soporte vectorial de supervivencia
+predict_survivalsvm <- predict(survival_SVM,newdata = test)
+#Se muestran los valores obtenidos
+print(predict_survivalsvm)
+attach(entrenamiento,warn.conflicts = F)
+#Se calcula el algoritmo de boosting. Para ello se excluyen las variables Tiempo_al_fracaso, y Fracasos.
+#Así como la variable abandono, ya que si no se producen errores en el algoritmo
+survival_glmboost <- glmboost(Surv(Tiempo_al_fracaso,Fracasos)~.,data = entrenamiento[,-c(69,70,71)], 
+                              na.action = na.pass, family = Cindex(sigma = 0.01),control = boost_control(
+                                mstop = 500, trace = TRUE, nu = 0.01))
+#Se obtienen las predicciones del modelo
+predict_glmboost <- predict(survival_glmboost,newdata = test)
+detach(entrenamiento)
+#Se calcula el índice de concordancia del modelo de boosting
+rcorr.cens(predict_glmboost , S = Surv(test$Tiempo_al_fracaso,test$Fracasos))
+#Se obtienen las predicciones del modelo de máquina de soporte vectorial de supervivencia
+predict_survivalsvm_2 <- predict_survivalsvm$predicted
+#Se calcula el índice de concordancia del modelo de máquina de soporte vectorial de supervivencia
+rcorr.cens(predict_survivalsvm_2 , S = Surv(test$Tiempo_al_fracaso,test$Fracasos))
+#Se obtienen las predicciones Out Of Bag (OOB) del modelo de RSF
+predict_rsf_2 <- random_s_f$predicted.oob
+#Se obtiene el índice de concordancia del modelo de RSF al restar a 1 el error de predicción del 
+#modelo de RSF
+cindex_rsf <- 1 - get.cindex(entrenamiento$Tiempo_al_fracaso, entrenamiento$Fracasos, predict_rsf_2)
+cindex_rsf
+#Resumen de la variable CargaViral_36
+summary(data_imp$CD4A_36)
+#Se crea un vector con valores para modificar la imputación
+delta <- c(-80,-60,-40,-20,0,20,40,60,80)
+#Se realiza un gráfico para comparar la probabilidad de fracaso de las
+#poblaciones con datos medidos y la que tiene datos faltantes. En este caso se utiliza la variable
+#CD4A_48 porque representa todo el tiempo del estudio 
+km <- survfit(Surv(Tiempo_al_fracaso, Fracasos) ~ is.na(CD4A_48), data = data_imp) 
+plot(km, 
+     lty  = 1, 
+     lwd  = 1.5, 
+     xlab = "Semanas",
+     ylab = "Probabilidad de fracaso virológico (Kaplan-Meier)", las=1, 
+     col  = c(mdc(4), mdc(5)), 
+     #Se indica que se marquen en el gráfico los tiempos de censura
+     mark.time = T)
+legend(0, 0.3, legend=c("Datos faltantes", "Datos medidos"),
+       col=c("red", "blue"), lty=1, cex=0.8)
+#Se crean tantos datasets imputados como valores tiene delta
+#cada dataset está modificado por un valor de delta
+imput_todos <- vector("list", length(delta))
+post <- imp_0$post
+for (i in 1:length(delta)){
+  d <- delta[i]
+  cmd <- paste("imp[[j]][,i] <- imp[[j]][,i] +", d)
+  post["CD4A_36"] <- cmd
+  imput <- mice(data_imp, post = post, maxit = 10, method = meth, predictorMatrix = quick,
+              remove.collinear = F, ridge = 1e-04, seed = 3, printFlag = F)
+  imput_todos[[i]] <- imput
+}
+#Se cambia la clase del objeto que almacena las imputaciones anidadas
+anidada <- miceadds::nested.datlist_create(imput_todos)
+#Se extrae el dataset correspondiente al valor de delta = -80
+imput_todos_1 <- miceadds::subset_datlist(anidada[[1]], subset = T,select = c("CargaViral_0","CargaViral_12","CargaViral_24","CargaViral_36","CargaViral_48",
+                                                                   "CD4A_0","CD4A_12","CD4A_24",
+                                                                   "CD4A_36","CD4A_48"), 
+                                          toclass = "mids")
+#Se realiza un gráfico con los valores extraídos 
+bwplot(imput_todos_1)
+#Se extrae el dataset correspondiente al valor de delta = 0
+imput_todos_5 <- miceadds::subset_datlist(anidada[[5]], subset = T,select = c("CargaViral_0","CargaViral_12","CargaViral_24","CargaViral_36","CargaViral_48",
+                                                                   "CD4A_0","CD4A_12","CD4A_24",
+                                                                   "CD4A_36","CD4A_48"),
+                                          toclass = "mids")
+#Se realiza un gráfico con los valores extraídos 
+bwplot(imput_todos_5)
+#Se extrae el dataset correspondiente al valor de delta = 80
+imput_todos_9 <- miceadds::subset_datlist(anidada[[9]], subset = T,select = c("CargaViral_0","CargaViral_12","CargaViral_24","CargaViral_36","CargaViral_48",
+                                                                   "CD4A_0","CD4A_12","CD4A_24",
+                                                                   "CD4A_36","CD4A_48"), 
+                                          toclass = "mids")
+#Se realiza un gráfico con los valores extraídos 
+bwplot(imput_todos_9)
+densityplot(imput_todos_1, lwd = 3)
+densityplot(imput_todos_5, lwd = 3)
+densityplot(imput_todos_9, lwd = 3)
+#Se realiza una gráfica para observar si hay distribuciones diferentes
+#entre las poblaciones
+ggboxplot(result_imp, x = "Grupo", y = "CargaViral_48", 
+          color = "Grupo", palette = c("#00AFBB", "#E7B800"),
+        ylab = "Carga Viral en la semana 48", xlab = "Grupo", ylim = c(0,200))
+#Se usa el test de Shapiro para comprobar la hipótesis de normalidad
+with(result_imp, shapiro.test(CargaViral_48[Grupo == "-1"]))
+#Se usa el test de Shapiro para comprobar la hipótesis de normalidad
+with(result_imp, shapiro.test(CargaViral_48[Grupo == "0"]))
+#Se comprueba si las medias entre los grupos de tratamiento son iguales 
+wilcox_viral <- wilcox.test(CargaViral_48 ~ Grupo, data = result_imp,
+                   exact = FALSE)
+wilcox_viral
+#Se realiza una gráfica para observar si hay distribuciones diferentes
+#entre las poblaciones
+ggboxplot(result_imp, x = "Grupo", y = "CD4A_48", 
+          color = "Grupo", palette = c("#00AFBB", "#E7B800"),
+        ylab = "Linfocitos CD4 en la semana 48", xlab = "Grupo", ylim = c(0,2000))
+#Se usa el test de Shapiro para comprobar la hipótesis de normalidad
+with(result_imp, shapiro.test(CD4A_48[Grupo == "-1"]))
+#Se usa el test de Shapiro para comprobar la hipótesis de normalidad
+with(result_imp, shapiro.test(CD4A_48[Grupo == "0"]))
+#Se comprueba si las medias entre los grupos de tratamiento son iguales 
+wilcox_CD4 <- wilcox.test(CD4A_48 ~ Grupo, data = result_imp,
+                   exact = FALSE)
+wilcox_CD4
+```
+
+
+
+
+
